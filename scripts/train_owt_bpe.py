@@ -8,7 +8,7 @@ def main():
     2. 保存结果
     3. 输出最长vocab
     '''
-    input_path = 'data/owt_valid.txt'
+    input_path = 'data/owt_train.txt'
     vocab_size = 32000
     special_tokens = ["<|endoftext|>"]
 
