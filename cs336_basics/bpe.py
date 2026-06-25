@@ -266,7 +266,7 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tu
 
     with open(input_path, 'rb') as f:
         # 分 chunk
-        num_processes = 16
+        num_processes = 8
         boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
 
     # 并行处理每个chunk然后合并
