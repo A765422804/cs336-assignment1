@@ -2,10 +2,22 @@ import os
 import regex as re
 from typing import BinaryIO
 from multiprocessing import Pool
+from dataclasses import dataclass
+import heapq
 
 # pre-tokenization 使用的正则匹配项
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
+@dataclass(frozen=True)
+class HeapItem:
+    freq: int
+    pair: tuple[bytes, bytes]
+
+    def __lt__(self, other: 'HeapItem')->bool:
+        if self.freq == other.freq:
+            return self.pair > other.pair
+        
+        return self.freq > other.freq
 
 def find_chunk_boundaries(
     file: BinaryIO,
@@ -93,38 +105,6 @@ def init_vocab(special_tokens: list[str])->dict[int, bytes]:
 
     return vocab
 
-def count_adjacent_pairs(pretoken_counts:dict[tuple[bytes, ...], int])->dict[tuple[bytes, bytes], int]:
-    """
-    1. 统计输入的dict的每个pretoken内部相邻bytes的出现频率
-    2. 返回bytes-pair出现频率字典
-    """
-    
-    pair_counts: dict[tuple[bytes, bytes], int] = {}
-    for pretoken,count in pretoken_counts.items():
-        if len(pretoken) >=2:
-            for i in range(len(pretoken) - 1):
-                cur_pair = (pretoken[i], pretoken[i + 1])
-                pair_counts[cur_pair] = pair_counts.get(cur_pair, 0) + count
-
-    return pair_counts
-
-def select_best_pair(pair_counts: dict[tuple[bytes, bytes], int])->tuple[bytes, bytes]:
-    """
-    1. 选择输入的dict的出现最高的bytes-pair
-    2. 返回出现最高的bytes-pair
-    """
-    best_pair: tuple[bytes, bytes] | None = None
-    best_count = -1
-
-    for pair, count in pair_counts.items():
-        if best_pair is None or count > best_count or (count == best_count and pair > best_pair):
-            best_pair = pair
-            best_count = count
-
-    assert best_pair is not None
-    
-    return best_pair
-
 def count_pretokens_for_chunk(input_path: str, start:int, end:int, special_tokens:list[str])->dict[tuple[bytes, ...], int]:
     """
     1. 子进程调用函数，处理当前进程的chunk，并且返回统计出来的pretokens
@@ -169,7 +149,7 @@ def build_pair_indices(pretoken_counts: dict[tuple[bytes, ...], int])->tuple[dic
 
     return pair_counts, pair_to_pretokens
 
-def remove_pretoken_contribution_(old_pretoken: tuple[bytes, ...], old_pretoken_counts: int, pair_counts:dict[tuple[bytes, bytes], int], pair_to_pretokens: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]]):
+def remove_pretoken_contribution_(old_pretoken: tuple[bytes, ...], old_pretoken_counts: int, pair_counts:dict[tuple[bytes, bytes], int], pair_to_pretokens: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]], changed_pairs_set:set[tuple[bytes, bytes]]):
     """
     对于即将删除的old pretoken，移除它在pair_counts和pair_to_pretokens里面的贡献
     """
@@ -181,6 +161,7 @@ def remove_pretoken_contribution_(old_pretoken: tuple[bytes, ...], old_pretoken_
         seen_pairs.add(cur_token_pair)
 
     for seen_pair in seen_pairs:
+        changed_pairs_set.add(seen_pair)
         pair_to_pretokens[seen_pair].remove(old_pretoken)
         if pair_counts[seen_pair] == 0:
             pair_counts.pop(seen_pair)
@@ -204,7 +185,7 @@ def merge_pair_in_single_pretoken(pretoken: tuple[bytes, ...], pair_to_merge: tu
 
     return merged_pretoken
 
-def add_pretoken_contribution_(new_pretoken: tuple[bytes, ...], added_pretoken_counts: int, pair_counts:dict[tuple[bytes, bytes], int], pair_to_pretokens: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]]):
+def add_pretoken_contribution_(new_pretoken: tuple[bytes, ...], added_pretoken_counts: int, pair_counts:dict[tuple[bytes, bytes], int], pair_to_pretokens: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]],changed_pairs_set:set[tuple[bytes, bytes]]):
     """
     对于新的pretoken，增加它在pair_counts和pair_to_pretokens里面的贡献
     """   
@@ -216,26 +197,32 @@ def add_pretoken_contribution_(new_pretoken: tuple[bytes, ...], added_pretoken_c
         seen_pairs.add(cur_token_pair)
 
     for seen_pair in seen_pairs:
+        changed_pairs_set.add(seen_pair)
         pair_to_pretokens.setdefault(seen_pair, set()).add(new_pretoken)
     
-def merge_pair_incrementally_(pretoken_counts: dict[tuple[bytes, ...], int], best_pair: tuple[bytes, bytes], pair_counts: dict[tuple[bytes, bytes], int], pair_to_pretokens: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]]):
+def merge_pair_incrementally_(pretoken_counts: dict[tuple[bytes, ...], int], best_pair: tuple[bytes, bytes], pair_counts: dict[tuple[bytes, bytes], int], pair_to_pretokens: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]], pair_heap:list[HeapItem]):
     """
     同时更新pretoken counts， pair counts, pair to pretokens
     1. 找到当前best pair对应的pretokens并复制
     2. 对每个old pretoken：
-        2.1. 移除对pair counts和pair to pretokens的贡献
-        2.2. 删除这个old pretoken从pretoken counts里
-        2.3. 合并新的到pretoken count
-        2.4. 把新的的贡献加进pair counts和pair to pretokens
+        2.1. 记录remove和add中修改过的pair counts的pair信息
+        2.2. 移除对pair counts和pair to pretokens的贡献
+        2.3. 删除这个old pretoken从pretoken counts里
+        2.4. 合并新的到pretoken count
+        2.5. 把新的的贡献加进pair counts和pair to pretokens
+    3. 把新的pair对象放进pair_heap
     """
     affected_pretokens = (pair_to_pretokens[best_pair]).copy()
+
+    # 记录被修改过的pair
+    changed_pairs_set: set[tuple[bytes, bytes]] = set()
 
     for old_pretoken in affected_pretokens:
         assert(old_pretoken in pretoken_counts)
 
         # 移除这个pretoken对pair counts和pair_to_pretokens的贡献
         old_pretoken_counts = pretoken_counts[old_pretoken]
-        remove_pretoken_contribution_(old_pretoken, old_pretoken_counts, pair_counts, pair_to_pretokens)
+        remove_pretoken_contribution_(old_pretoken, old_pretoken_counts, pair_counts, pair_to_pretokens, changed_pairs_set)
 
         # 在pretoken counts中删除这个pretoken
         pretoken_counts.pop(old_pretoken)
@@ -245,7 +232,24 @@ def merge_pair_incrementally_(pretoken_counts: dict[tuple[bytes, ...], int], bes
         pretoken_counts[new_pretoken] = pretoken_counts.get(new_pretoken, 0) + old_pretoken_counts
 
         # 增加新的pretoken对pair counts和pair_to_pretokens的贡献
-        add_pretoken_contribution_(new_pretoken, old_pretoken_counts, pair_counts, pair_to_pretokens)
+        add_pretoken_contribution_(new_pretoken, old_pretoken_counts, pair_counts, pair_to_pretokens, changed_pairs_set)
+
+    # 将修改过的pair对象放进pair heap
+    for changed_pair in changed_pairs_set:
+        if changed_pair in pair_counts:
+            heapq.heappush(pair_heap, HeapItem(pair_counts[changed_pair], changed_pair))
+
+
+def select_best_pair_from_heap(pair_heap: list[HeapItem], pair_counts: dict[tuple[bytes, bytes], int])->tuple[bytes, bytes]:
+    """
+    找到当前tokens pair counts里面出现频率最高，字典序最大的合法pair
+    """
+    while pair_heap:
+        top = heapq.heappop(pair_heap)
+        if top.pair in pair_counts and top.freq == pair_counts[top.pair]:
+            return top.pair
+        
+    assert False
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]: 
     """
@@ -253,10 +257,10 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tu
     2. 预处理每个chunk，执行pre-tokenizaion
     3. 汇总所有的chunk的pre-tokenization的字节tuple的频率统计结果
     4. 创建初始词汇表和merges
-    5. 初始化pretoken内部相邻token pair的出现个数，以及每个token pair对应的pretoken集合
+    5. 初始化pretoken内部相邻token pair的出现个数，以及每个token pair对应的pretoken集合，并基于token pair count建堆
     6. 开始 merge loop
     6.1. 计算出现频率最高的token pair
-    6.2. 把出现频率最高的token pair合并，并且记录merge结果，并且写入vocab，更新pretoken和pair count基于pair_to_pretoken
+    6.2. 把出现频率最高的token pair合并，并且记录merge结果，并且写入vocab，更新pretoken和pair count基于pair_to_pretoken，同时更新pair_heap
     6.3. 循环以上两步直到达到最大的次数
     """
 
@@ -283,28 +287,25 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tu
     # 初始化 token-pair counts 和对应的 token-pair 到 pretoken set 的映射
     token_pair_counts, pair_to_pretokens = build_pair_indices(total_pretoken_counts)
 
-    while len(vocab) < vocab_size:
-        # 计算相邻token pair的频率
-        # pair_counts = count_adjacent_pairs(total_pretoken_counts)
+    # 初始化pair_heap
+    pair_heap = []
+    for pair, count in token_pair_counts.items():
+        pair_heap.append(HeapItem(count, pair))
+    heapq.heapify(pair_heap)
 
+    while len(vocab) < vocab_size:
         if len(token_pair_counts) == 0:
             break
 
         # 计算出现频率最高的pair
-        best_pair = select_best_pair(token_pair_counts)
+        best_pair = select_best_pair_from_heap(pair_heap, token_pair_counts)
         vocab[len(vocab)] = best_pair[0] + best_pair[1]
         merges.append(best_pair)
 
-        merge_pair_incrementally_(total_pretoken_counts, best_pair, token_pair_counts, pair_to_pretokens)
+        merge_pair_incrementally_(total_pretoken_counts, best_pair, token_pair_counts, pair_to_pretokens, pair_heap)
 
     return vocab, merges
 
 if __name__ == '__main__':
     # do test
-
-    pretoken_counts = {
-      (b"a", b"a", b"a"): 3,
-      (b"a", b"b"): 2,
-    }
-
-    print(build_pair_indices(pretoken_counts))
+    pass

@@ -1,6 +1,17 @@
 import os
 from typing import BinaryIO
+from dataclasses import dataclass
 
+@dataclass(frozen=True)
+class HeapItem:
+    freq: int
+    pair: tuple[bytes, bytes]
+
+    def __lt__(self, other: 'HeapItem')->bool:
+        if self.freq == other.freq:
+            return self.pair > other.pair
+        
+        return self.freq > other.freq
 
 def find_chunk_boundaries(
     file: BinaryIO,
