@@ -8,11 +8,15 @@ PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s
 class Tokenizer():
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
         '''
-        初始化vocab、merges和special_token，以及构建反向映射
+        初始化vocab、merges和special_token，以及构建反向映射和merge-ranks，方便后面pretoken merge，以及排序后的special_tokens
         '''
         self.vocab = vocab
         self.merges = merges
         self.special_tokens = special_tokens if special_tokens else []
+        self.merge_ranks: dict[tuple[bytes, bytes], int] = {}
+        for i, merge in enumerate(merges):
+            self.merge_ranks[merge] = i
+        self.sorted_special_tokens = sorted(self.special_tokens, key=len, reverse=True)
 
         # 构建反向映射
         self.bytes_to_id:dict[bytes, int] = {}
@@ -39,8 +43,7 @@ class Tokenizer():
         tokens:list[int] = []
 
         if self.special_tokens:
-            sorted_special_tokens = sorted(self.special_tokens, key=len, reverse=True)
-            pattern = '(' + '|'.join([re.escape(special_token) for special_token in sorted_special_tokens]) + ')'
+            pattern = '(' + '|'.join([re.escape(special_token) for special_token in self.sorted_special_tokens]) + ')'
             text_segments = re.split(pattern, text)
         else:
             text_segments = [text]
@@ -73,7 +76,7 @@ class Tokenizer():
         输入是不含special_token的字符串，需要输出对应的token序列：
         1. 通过PAT做pretoken处理
         2. 对于每个，拆成tuple[bytes, ...]
-        3. 每个pretoken内部按照merge顺序合并
+        3. 每个pretoken内部按照merge顺序合并，具体来说，每次取当前相邻pair得到rank最低的merge，然后合并，直到没有可merge的
         4. 把最终的bytes token查bytes_to_id
         '''
 
@@ -84,13 +87,27 @@ class Tokenizer():
             match_bytes = match.group().encode('utf-8')
             pretoken = tuple(bytes([byte]) for byte in match_bytes)
 
-            for merge in self.merges:
-                new_pretoken_list = []
+            while True:
+                min_rank = None
+                min_pair = None
+                for i in range(len(pretoken) - 1):
+                    pair = (pretoken[i], pretoken[i + 1])
+                    rank = self.merge_ranks.get(pair)
+                    if rank is None:
+                        continue
 
+                    if min_rank is None or (rank < min_rank):
+                        min_rank = rank
+                        min_pair = pair
+                    
+                if min_rank is None:
+                    break
+
+                new_pretoken_list = []
                 i = 0
                 while i < len(pretoken):
-                    if i + 1 < len(pretoken) and ((pretoken[i], pretoken[i + 1]) == merge):
-                        new_pretoken_list.append(merge[0] + merge[1])
+                    if i + 1 < len(pretoken) and ((pretoken[i], pretoken[i + 1]) == min_pair):
+                        new_pretoken_list.append(min_pair[0] + min_pair[1])
                         i += 2
                     else:
                         new_pretoken_list.append(pretoken[i])
