@@ -119,17 +119,6 @@ def count_pretokens_for_chunk(input_path: str, start:int, end:int, special_token
 
         return chunk_pretoken_counts
 
-def merge_pretoken_counts(chunk_pretoken_counts_list: list[dict[tuple[bytes, ...], int]])->dict[tuple[bytes, ...], int]:
-    """
-    1. 主进程合并函数，合并所有的chunk_pretoken_counts
-    """
-    total_pretoken_counts: dict[tuple[bytes, ...], int] = {}
-    for chunk_pretoken_counts in chunk_pretoken_counts_list:
-        for bytes_tuple, count in chunk_pretoken_counts.items():
-            total_pretoken_counts[bytes_tuple] = total_pretoken_counts.get(bytes_tuple, 0) + count
-
-    return total_pretoken_counts
-
 def build_pair_indices(pretoken_counts: dict[tuple[bytes, ...], int])->tuple[dict[tuple[bytes, bytes], int], dict[tuple[bytes, bytes], set[tuple[bytes, ...]]]]:
     """
     1. 输入pretoken counts
@@ -251,9 +240,17 @@ def select_best_pair_from_heap(pair_heap: list[HeapItem], pair_counts: dict[tupl
         
     assert False
 
+def count_pretokens_for_chunk_task(task:tuple[str, int, int, list[str]])->dict[tuple[bytes, ...], int]:
+    """
+    因为imap_unordered不会自动展开参数，所以需要增加一个wrapper来调用count_pretokens_for_chunk
+    """
+    input_path, start, end, special_tokens = task
+    return count_pretokens_for_chunk(input_path, start, end, special_tokens)
+
+
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]: 
     """
-    1. 先把给定文本分成若干大小不一的chunk，然后对每个chunk可以并行处理了。
+    1. 先把给定文本分成若干大小不一的chunk，然后对每个chunk可以多进程并行处理。
     2. 预处理每个chunk，执行pre-tokenizaion
     3. 汇总所有的chunk的pre-tokenization的字节tuple的频率统计结果
     4. 创建初始词汇表和merges
@@ -266,19 +263,22 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tu
 
     with open(input_path, 'rb') as f:
         # 分 chunk
-        num_processes = 8
-        boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+        num_chunks = 128
+        boundaries = find_chunk_boundaries(f, num_chunks, b"<|endoftext|>")
 
     # 并行处理每个chunk然后合并
     tasks = []
+    num_processes = 8
     for start,end in zip(boundaries[:-1], boundaries[1:]):
         task = (input_path, start, end, special_tokens)
         tasks.append(task)
     
+    total_pretoken_counts: dict[tuple[bytes, ...], int] = {}
     with Pool(processes=num_processes) as pool:
-        chunk_pretoken_counts_list = pool.starmap(count_pretokens_for_chunk, tasks)
-
-    total_pretoken_counts = merge_pretoken_counts(chunk_pretoken_counts_list)
+        # chunk_pretoken_counts_list = pool.starmap(count_pretokens_for_chunk_task, tasks)
+        for chunk_pretoken_counts in pool.imap_unordered(count_pretokens_for_chunk_task, tasks):
+            for pretoken, count in chunk_pretoken_counts.items():
+                total_pretoken_counts[pretoken] = total_pretoken_counts.get(pretoken, 0) + count
 
     # 创建初始词汇表
     vocab = init_vocab(special_tokens)
