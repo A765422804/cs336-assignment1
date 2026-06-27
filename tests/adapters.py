@@ -9,6 +9,7 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
+from cs336_basics.nn import Linear
 
 def run_linear(
     d_in: int,
@@ -29,8 +30,13 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
 
+    linear = Linear(d_in, d_out)
+    linear.load_state_dict({'weight': weights})
+    return linear(in_features)
+
     raise NotImplementedError
 
+from cs336_basics.nn import Embedding
 
 def run_embedding(
     vocab_size: int,
@@ -51,8 +57,15 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
 
+    embedding = Embedding(vocab_size, d_model)
+    embedding.load_state_dict(
+        {'weight' : weights}
+    )
+    return embedding(token_ids)
+
     raise NotImplementedError
 
+from cs336_basics.nn import SwiGLU
 
 def run_swiglu(
     d_model: int,
@@ -83,6 +96,15 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
+
+    swiglu = SwiGLU(d_model, d_ff)
+    swiglu.load_state_dict({
+        'linear_gate.weight' : w1_weight,
+        'linear_down.weight' : w2_weight,
+        'linear_up.weight' : w3_weight
+    })
+    return swiglu(in_features)
+
     raise NotImplementedError
 
 
@@ -180,6 +202,7 @@ def run_multihead_self_attention_with_rope(
     """
     raise NotImplementedError
 
+from cs336_basics.nn import RoPE
 
 def run_rope(
     d_k: int,
@@ -200,6 +223,10 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
+
+    rope = RoPE(theta, d_k, max_seq_len)
+    return rope(in_query_or_key, token_positions)
+
     raise NotImplementedError
 
 
@@ -357,6 +384,7 @@ def run_transformer_lm(
     """
     raise NotImplementedError
 
+from cs336_basics.nn import RMSNorm
 
 def run_rmsnorm(
     d_model: int,
@@ -378,6 +406,11 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
+
+    rmsnorm = RMSNorm(d_model, eps)
+    rmsnorm.load_state_dict({'weight' : weights})
+    return rmsnorm(in_features)
+
     raise NotImplementedError
 
 
