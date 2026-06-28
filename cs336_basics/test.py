@@ -1,13 +1,5 @@
-import torch
-from einops import rearrange, einsum
+from nn import TransformerBlock
 
-D = torch.ones(size=(3,4,6))
-A = torch.ones(size=(5, 6))
+tb = TransformerBlock(2, 1, 1, 1, 1)
 
-Y = D @ A.T
-
-print(Y.shape)
-
-Y = einsum(D, A, 'batch sequence d_in, d_out d_in -> batch sequence d_out')
-
-print(Y.shape)
+print(tb.state_dict().keys())
