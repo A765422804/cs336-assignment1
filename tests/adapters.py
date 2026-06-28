@@ -534,6 +534,7 @@ def run_cross_entropy(
 
     raise NotImplementedError
 
+from cs336_basics.optimizer import gradient_clipping
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
     """Given a set of parameters, clip their combined gradients to have l2 norm at most max_l2_norm.
@@ -544,6 +545,9 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
+
+    return gradient_clipping(parameters, max_l2_norm)
+
     raise NotImplementedError
 
 from cs336_basics.optimizer import AdamW
@@ -557,6 +561,7 @@ def get_adamw_cls() -> Any:
 
     raise NotImplementedError
 
+from cs336_basics.optimizer import cos_learning_rate_schedule
 
 def run_get_lr_cosine_schedule(
     it: int,
@@ -583,6 +588,9 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
+
+    return cos_learning_rate_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
+
     raise NotImplementedError
 
 

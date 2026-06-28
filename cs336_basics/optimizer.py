@@ -1,6 +1,6 @@
 from torch import optim
 from typing import Optional
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import math
 import torch
 
@@ -63,3 +63,33 @@ class AdamW(optim.Optimizer):
 
         return loss
 
+def cos_learning_rate_schedule(t:int, alpha_max: float, alpha_min: float, T_w: int, T_c:int)->float:
+    '''
+    包括warm up | cosine annealing | post-annealing三个阶段
+    '''
+
+    if t < T_w:
+        return t / T_w * alpha_max
+    elif t <= T_c:
+        return alpha_min + 0.5 * (1 + math.cos((t - T_w)/ (T_c - T_w) * math.pi)) * (alpha_max - alpha_min)
+    else:
+        return alpha_min
+    
+def gradient_clipping(params: Iterable[torch.nn.Parameter], max_l2_norm:float, eps: float = 1e-6):
+    '''
+    输入所有参数的梯度，然后计算整体的l2_norm，如果超过了阈值，就应用梯度裁剪
+    计算整体的l2 norm相当于把所有的参数的梯度展平乘一个大向量，然后每个元素平方求和再开根号，所以实际计算可以直接算平方
+    '''
+    params = list(params)
+
+    l2_norm_square = 0
+    for param in params:
+        if param.grad is not None:
+            l2_norm_square += torch.sum(param.grad.data ** 2)
+    
+    if l2_norm_square >= max_l2_norm ** 2:
+        factor = max_l2_norm / (torch.sqrt(l2_norm_square) + eps)
+
+        for param in params:
+            if param.grad is not None:
+                param.grad.data *= factor
