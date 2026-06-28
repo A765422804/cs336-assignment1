@@ -290,4 +290,14 @@ class TransformerLM(nn.Module):
 
         return logits
 
-        
+def cross_entropy(logits: Float[Tensor, '... vocab_size'], targets: Int[Tensor, '...'])->Float[Tensor, '']:
+    '''
+    计算交叉熵损失，具体参见PDF第29页，需要手动把公式推导成如下形式：
+    m = max_a o_i[a]
+    loss_i = m + log(sum_a(exp(o_i[a] - m))) - o_i[x_{i + 1}]
+    '''
+
+    m = torch.max(logits, dim=-1, keepdim=True).values # ... 1
+    logsumexp = m + torch.log(torch.sum(torch.exp(logits - m), dim=-1, keepdim=True))
+    target_logits = logits.gather(dim=-1, index=targets.unsqueeze(-1))
+    return torch.mean(logsumexp - target_logits)

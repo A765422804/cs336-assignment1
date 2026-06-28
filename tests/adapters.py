@@ -512,6 +512,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
 
     raise NotImplementedError
 
+from cs336_basics.nn import cross_entropy
 
 def run_cross_entropy(
     inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
@@ -528,6 +529,9 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
+
+    return cross_entropy(inputs, targets)
+
     raise NotImplementedError
 
 
@@ -542,11 +546,15 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
     """
     raise NotImplementedError
 
+from cs336_basics.optimizer import AdamW
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
+
+    return AdamW
+
     raise NotImplementedError
 
 
