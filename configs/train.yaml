@@ -1,0 +1,37 @@
+data: # 数据路径
+  train_path:
+  val_path:
+
+model: # 模型超参数
+  vocab_size:
+  context_length:
+  num_layers:
+  d_model:
+  num_heads:
+  d_ff:
+  rope_theta:
+
+optimizer: # 优化器超参数
+  lr: # 默认lr，会被lr schedule覆盖掉
+  betas: []
+  eps:
+  weight_decay:
+
+lr_schedule:
+  alpha_max:
+  alpha_min:
+  warmup_iters:
+  cosine_iters:
+
+training: # 训练时超参数
+  device: 
+  seed: 
+  max_iters:
+  batch_size:
+  grad_clip:
+
+  log_interval: 
+  eval_interval:
+
+checkpoint:
+  resume_path:

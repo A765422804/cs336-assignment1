@@ -77,7 +77,7 @@ def cos_learning_rate_schedule(t:int, alpha_max: float, alpha_min: float, T_w: i
     
 def gradient_clipping(params: Iterable[torch.nn.Parameter], max_l2_norm:float, eps: float = 1e-6):
     '''
-    输入所有参数的梯度，然后计算整体的l2_norm，如果超过了阈值，就应用梯度裁剪
+    输入所有参数，然后计算整体梯度的l2_norm，如果超过了阈值，就应用梯度裁剪
     计算整体的l2 norm相当于把所有的参数的梯度展平乘一个大向量，然后每个元素平方求和再开根号，所以实际计算可以直接算平方
     '''
     params = list(params)
