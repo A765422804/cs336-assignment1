@@ -267,7 +267,7 @@ class TransformerBlock(nn.Module):
 class TransformerLM(nn.Module):
     def __init__(self, vocab_size: int, context_length: int, num_layers: int, d_model: int, num_heads: int, d_ff: int, rope_theta: float):
         '''
-        构建完整transformer模型，包括embedding， 多层transformer，一个RMS norm和一个线性层
+        构建完整transformer模型，包括embedding， 多层transformer，一个RMS norm和一个线性层，同时记录最大长度，方便推理用
         '''
         super().__init__()
 
@@ -277,6 +277,7 @@ class TransformerLM(nn.Module):
         ])
         self.ln_final = RMSNorm(d_model)
         self.lm_head = Linear(d_model, vocab_size)
+        self.context_length = context_length
 
     def forward(self, token_ids: Int[Tensor, 'batch_size seq_len'], token_positions: Int[Tensor, '... seq_len'] | None = None)->Float[Tensor, 'batch_size seq_len vocab_size']:
         '''
