@@ -3,7 +3,10 @@ import yaml
 import random
 import numpy as np
 import torch
+import time
 from tqdm import tqdm
+import json
+from pathlib import Path
 from cs336_basics.nn import TransformerLM, cross_entropy
 from cs336_basics.optimizer import AdamW, gradient_clipping
 from cs336_basics.training import load_checkpoint
@@ -80,46 +83,88 @@ def training_loop(config: dict):
     if resume_path is not None:
         start_iter = load_checkpoint(resume_path, model, optimizer)
 
+    # 加载config参数
+    log_interval = config['logging']['log_interval']
+    eval_interval = config['logging']['eval_interval']
+    batch_size = config['training']['batch_size']
+
     # 正式开始训练
     max_iters = config['training']['max_iters']
+    start_time = time.perf_counter()
+    log_path = config['logging']['log_path']
+    Path(log_path).parent.mkdir(exist_ok=True)
     pbar = tqdm(range(start_iter, max_iters))
-    for t in pbar:
-        # set lr
-        lr = cos_learning_rate_schedule(
-            t,
-            config['lr_schedule']['alpha_max'],
-            config['lr_schedule']['alpha_min'],
-            config['lr_schedule']['warmup_iters'],
-            config['lr_schedule']['cosine_iters']
-        )
-        for group in optimizer.param_groups:
-            group['lr'] = lr
+    with open(log_path, 'a', encoding='utf-8') as log_file:
+        for t in pbar:
+            # set lr
+            lr = cos_learning_rate_schedule(
+                t,
+                config['lr_schedule']['alpha_max'],
+                config['lr_schedule']['alpha_min'],
+                config['lr_schedule']['warmup_iters'],
+                config['lr_schedule']['cosine_iters']
+            )
+            for group in optimizer.param_groups:
+                group['lr'] = lr
 
-        # get batch
-        inputs, targets = get_batch(train_data, config['training']['batch_size'], context_length, device)
+            # get batch
+            inputs, targets = get_batch(train_data, batch_size ,context_length, device)
 
-        # zero_grad
-        optimizer.zero_grad()
+            # zero_grad
+            optimizer.zero_grad()
 
-        # forward
-        logits = model(inputs)
+            # forward
+            logits = model(inputs)
 
-        # loss
-        loss = cross_entropy(logits, targets)
+            # loss
+            loss = cross_entropy(logits, targets)
 
-        # backward
-        loss.backward()
+            # backward
+            loss.backward()
 
-        # clip grads
-        grad_clip = config['training'].get('grad_clip', None)
-        if grad_clip:
-            gradient_clipping(model.parameters(), grad_clip)
+            # clip grads
+            grad_clip = config['training'].get('grad_clip', None)
+            if grad_clip:
+                gradient_clipping(model.parameters(), grad_clip)
 
-        # optimizer.step
-        optimizer.step()
+            # optimizer.step
+            optimizer.step()
 
-        # log / eval / checkpoint
-        pbar.set_postfix(loss=loss.item(), lr=lr)
+            # log / eval / checkpoint
+            pbar.set_postfix(loss=loss.item(), lr=lr)
+
+            need_train_log = (t + 1) % log_interval == 0
+            need_eval_log = (t + 1) % eval_interval == 0
+
+            if need_train_log or need_eval_log:
+                elapsed = time.perf_counter() - start_time
+                record = {
+                    'step' : t + 1,
+                    'time_sec': elapsed,
+                    'lr' : lr
+                }
+
+                if need_train_log:
+                    record['train_loss'] = loss.item()
+
+                if need_eval_log:
+                    eval_iters = config['logging']['eval_iters']
+                    val_loss = 0
+                    model.eval()
+                    with torch.no_grad():
+                        for _ in range(eval_iters):
+                            eval_inputs, eval_targets = get_batch(val_data, batch_size, context_length, device)
+                            eval_logits = model(eval_inputs)
+                            val_loss += cross_entropy(eval_logits, eval_targets).item()
+                        val_loss /= eval_iters
+                    model.train()
+
+                    record['val_loss'] = val_loss
+
+                json.dump(record, log_file)
+                log_file.write('\n')
+                log_file.flush()
+            
 
 def main():
     '''

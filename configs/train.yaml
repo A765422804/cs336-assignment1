@@ -30,8 +30,11 @@ training: # 训练时超参数
   batch_size:
   grad_clip:
 
+logging:
   log_interval: 
   eval_interval:
+  eval_iters:
+  log_path:
 
 checkpoint:
   resume_path:
