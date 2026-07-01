@@ -7,9 +7,10 @@ import time
 from tqdm import tqdm
 import json
 from pathlib import Path
+import math
 from cs336_basics.nn import TransformerLM, cross_entropy
 from cs336_basics.optimizer import AdamW, gradient_clipping
-from cs336_basics.training import load_checkpoint
+from cs336_basics.training import load_checkpoint, save_checkpoint
 from cs336_basics.optimizer import cos_learning_rate_schedule
 from cs336_basics.data import get_batch
 
@@ -44,9 +45,10 @@ def training_loop(config: dict):
         9. log / eval / checkpoint
     '''
 
-    # 设置随机数种子
-    seed = config['training'].get('seed', 42)
-    set_seed(seed)
+    # 设置随机数种字
+    seed = config['training'].get('seed', None)
+    if seed is not None:
+        set_seed(seed)
 
     # 选择设备
     device = config['training'].get('device', 'cpu')
@@ -92,7 +94,7 @@ def training_loop(config: dict):
     max_iters = config['training']['max_iters']
     start_time = time.perf_counter()
     log_path = config['logging']['log_path']
-    Path(log_path).parent.mkdir(exist_ok=True)
+    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
     pbar = tqdm(range(start_iter, max_iters))
     with open(log_path, 'a', encoding='utf-8') as log_file:
         for t in pbar:
@@ -123,9 +125,7 @@ def training_loop(config: dict):
             loss.backward()
 
             # clip grads
-            grad_clip = config['training'].get('grad_clip', None)
-            if grad_clip:
-                gradient_clipping(model.parameters(), grad_clip)
+            grad_norm = gradient_clipping(model.parameters(), config['training']['grad_clip'])
 
             # optimizer.step
             optimizer.step()
@@ -138,14 +138,23 @@ def training_loop(config: dict):
 
             if need_train_log or need_eval_log:
                 elapsed = time.perf_counter() - start_time
+                param_norm_square = 0
+                for param in model.parameters():
+                    param_norm_square += torch.sum(param.data ** 2)
+
                 record = {
                     'step' : t + 1,
                     'time_sec': elapsed,
-                    'lr' : lr
+                    'lr' : lr,
+                    'grad_norm' : grad_norm.item(),
+                    'param_norm' : (torch.sqrt(param_norm_square)).item()
                 }
 
+                train_loss = loss.item()
+                train_perplexity = math.exp(train_loss)
                 if need_train_log:
-                    record['train_loss'] = loss.item()
+                    record['train_loss'] = train_loss
+                    record['train_perplexity'] = train_perplexity
 
                 if need_eval_log:
                     eval_iters = config['logging']['eval_iters']
@@ -158,13 +167,19 @@ def training_loop(config: dict):
                             val_loss += cross_entropy(eval_logits, eval_targets).item()
                         val_loss /= eval_iters
                     model.train()
+                    val_perplexity = math.exp(val_loss)
 
                     record['val_loss'] = val_loss
+                    record['val_perplexity'] = val_perplexity
 
                 json.dump(record, log_file)
                 log_file.write('\n')
                 log_file.flush()
-            
+
+    # 完成训练，保存数据
+    final_path = config['checkpoint']['final_path']
+    Path(final_path).parent.mkdir(parents=True,exist_ok=True)
+    save_checkpoint(model, optimizer, max_iters, final_path)
 
 def main():
     '''
